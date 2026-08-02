@@ -2,7 +2,7 @@
   "name": "pixel-pet",
   "productName": "像素桌宠",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Pixel Pet",
   "description": "把照片变成像素桌宠，支持待机动画与国内 AI 对话",
   "type": "module",
