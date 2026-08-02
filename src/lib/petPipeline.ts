@@ -41,21 +41,24 @@ export async function buildPetFromUpload(
   onProgress?.('正在抠出主体…')
   const subject = await extractSubject(originalDataUrl, onProgress, cropMode)
 
-  onProgress?.('正在卡通化…')
+  const faceMode = cropMode === 'face' || subject.usedFaceCrop
+  // Side-walk rebuild keeps more photo detail; pose-preserve uses flatter cel look
+  onProgress?.('正在动漫像素化…')
   const cartoonCanvas = await cartoonizeImage(subject.cutoutDataUrl, {
-    size: Math.max(96, Math.min(160, (opts.pixelSize ?? 64) * 2)),
-    levels: Math.max(4, Math.min(10, Math.round((opts.colorCount ?? 24) / 4))),
-    blur: 1.4,
+    size: !faceMode && !preservePose
+      ? Math.max(128, Math.min(192, (opts.pixelSize ?? 64) * 3))
+      : Math.max(96, Math.min(160, (opts.pixelSize ?? 64) * 2)),
+    levels: !faceMode && !preservePose
+      ? Math.max(6, Math.min(10, Math.round((opts.colorCount ?? 24) / 3)))
+      : Math.max(4, Math.min(10, Math.round((opts.colorCount ?? 24) / 4))),
+    blur: !faceMode && !preservePose ? 0.9 : 1.4,
     outline: true,
   })
   const cartoonDataUrl = cartoonCanvas.toDataURL('image/png')
 
-  const faceMode = cropMode === 'face' || subject.usedFaceCrop
-
   let sprites: PetSpriteSet
   if (!faceMode && !preservePose) {
-    onProgress?.('正在生成全新侧面卡通形象，并制作左右走 / 眨眼…')
-    sprites = await synthesizeNewSideWalkPet(cartoonDataUrl)
+    sprites = await synthesizeNewSideWalkPet(cartoonDataUrl, onProgress)
   } else {
     onProgress?.('正在识别卡通形象部位…')
     const img = await loadImage(cartoonDataUrl)

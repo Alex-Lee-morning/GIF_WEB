@@ -116,7 +116,7 @@ export default function App() {
           ? '仅脸部动画预览已生成，请确认'
           : built.preservePose
             ? '卡通动画预览已生成（保留原图姿势），请确认'
-            : '卡通动画预览已生成（全新侧面形象 + 左右走），请确认',
+            : '卡通动画预览已生成（AI 部位建模侧面形象 + 左右走），请确认',
       )
     } catch (err) {
       setStatus(err instanceof Error ? err.message : '处理失败')
@@ -289,7 +289,7 @@ export default function App() {
                 onChange={(e) => setPreservePose(e.target.value === 'yes')}
               >
                 <option value="yes">是 · 按照片姿势生成动画</option>
-                <option value="no">否 · 生成全新侧面卡通形象并左右走</option>
+                <option value="no">否 · AI 识别部位，生成相似动漫像素侧面并左右走</option>
               </select>
             </label>
           ) : null}

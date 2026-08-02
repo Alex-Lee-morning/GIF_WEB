@@ -1,4 +1,5 @@
 import type { BodyParts, Rect } from './detectParts'
+import { detectParts } from './detectParts'
 import type { PetSpriteSet } from '../../shared/types'
 import { generatePetSprites } from './sprites'
 import { loadImage, type PixelImage } from './pixelate'
@@ -9,137 +10,97 @@ interface Rgb {
   b: number
 }
 
-interface CartoonAnalysis {
-  primary: Rgb
-  secondary: Rgb
-  accent: Rgb
-  outline: Rgb
-  highlight: Rgb
-  eye: Rgb
-  /** Soft face stamp from upper source (optional likeness) */
-  faceStamp: HTMLCanvasElement | null
+interface PartLayer {
+  canvas: HTMLCanvasElement
+  /** Dominant fill color inside the patch */
+  fill: Rgb
 }
 
+interface PartKit {
+  head: PartLayer
+  torso: PartLayer
+  leftLeg: PartLayer
+  rightLeg: PartLayer
+  leftArm: PartLayer
+  rightArm: PartLayer
+  leftEye: PartLayer | null
+  rightEye: PartLayer | null
+  mouth: PartLayer | null
+  palette: {
+    primary: Rgb
+    secondary: Rgb
+    accent: Rgb
+    outline: Rgb
+    highlight: Rgb
+  }
+  sourceParts: BodyParts
+}
+
+type ProgressFn = (message: string) => void
+
 /**
- * Build a brand-new side-facing cartoon pet from the user's cartoonized cutout
- * (does NOT paste onto the default dog). Then generate walk L/R + blink idle.
+ * AI-assisted side-walk pet:
+ * 1) detect head/torso/limbs on the cartoonized photo
+ * 2) extract each part as a textured layer (likeness from the image)
+ * 3) rebuild a right-facing anime-pixel side model from those layers
+ * 4) generate walk L/R + blink idle
  */
-export async function synthesizeNewSideWalkPet(cartoonDataUrl: string): Promise<PetSpriteSet> {
+export async function synthesizeNewSideWalkPet(
+  cartoonDataUrl: string,
+  onProgress?: ProgressFn,
+): Promise<PetSpriteSet> {
+  onProgress?.('正在识别图片各部位（头/身/四肢）…')
   const img = await loadImage(cartoonDataUrl)
   const src = imageToCanvas(img)
-  const analysis = analyzeCartoon(src)
-  const { canvas, parts } = drawNewSideCharacter(analysis)
+  const detected = await detectParts(cartoonDataUrl, src.width, src.height)
+
+  onProgress?.('正在按部位提取贴图并分析配色…')
+  const kit = buildPartKit(src, detected)
+
+  onProgress?.('正在生成相似的动漫像素侧面形象…')
+  const { canvas, parts } = assembleSideAnimeModel(kit)
+  stylizeAnimePixel(canvas, kit.palette.outline)
+
   const pixel = canvasToPixelImage(canvas)
   const sx = pixel.width / canvas.width
   const sy = pixel.height / canvas.height
   const scaled = scaleParts(parts, sx, sy)
+
+  onProgress?.('正在生成左右走 / 眨眼动画…')
   return generatePetSprites(pixel, scaled, { mode: 'full' })
 }
 
-function analyzeCartoon(src: HTMLCanvasElement): CartoonAnalysis {
-  const ctx = src.getContext('2d', { willReadFrequently: true })
-  if (!ctx) {
-    return fallbackAnalysis()
-  }
-  const { data, width, height } = ctx.getImageData(0, 0, src.width, src.height)
-  const counts = new Map<string, { c: Rgb; n: number }>()
-  let minX = width
-  let minY = height
-  let maxX = 0
-  let maxY = 0
+function buildPartKit(src: HTMLCanvasElement, parts: BodyParts): PartKit {
+  const palette = extractPalette(src)
+  const pad = (r: Rect, ratio: number) => padRect(r, ratio, src.width, src.height)
 
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const i = (y * width + x) * 4
-      if (data[i + 3] < 128) continue
-      minX = Math.min(minX, x)
-      minY = Math.min(minY, y)
-      maxX = Math.max(maxX, x)
-      maxY = Math.max(maxY, y)
-      const r = data[i]
-      const g = data[i + 1]
-      const b = data[i + 2]
-      // quantize for palette clustering
-      const key = `${r >> 4},${g >> 4},${b >> 4}`
-      const cur = counts.get(key)
-      if (cur) {
-        cur.n++
-        cur.c.r += r
-        cur.c.g += g
-        cur.c.b += b
-      } else {
-        counts.set(key, { c: { r, g, b }, n: 1 })
-      }
-    }
-  }
-
-  const sorted = [...counts.values()]
-    .map((v) => ({
-      r: Math.round(v.c.r / v.n),
-      g: Math.round(v.c.g / v.n),
-      b: Math.round(v.c.b / v.n),
-      n: v.n,
-      lum: 0.299 * (v.c.r / v.n) + 0.587 * (v.c.g / v.n) + 0.114 * (v.c.b / v.n),
-    }))
-    .sort((a, b) => b.n - a.n)
-
-  if (sorted.length === 0) return fallbackAnalysis()
-
-  const primary = sorted[0]
-  const secondary =
-    sorted.find((c) => c.lum > primary.lum + 25) ??
-    sorted.find((c) => Math.abs(c.lum - primary.lum) > 20) ??
-    lighten(primary, 40)
-  const accent = sorted.find((c) => c.lum < primary.lum - 30) ?? darken(primary, 45)
-  const outline = darken(accent, 25)
-  const highlight = lighten(secondary, 35)
-  const eye = sorted.find((c) => c.lum < 70) ?? { r: 30, g: 24, b: 22 }
-
-  // Face stamp: upper 45% of opaque subject, side-cropped to rightish for profile feel
-  let faceStamp: HTMLCanvasElement | null = null
-  if (maxX > minX && maxY > minY) {
-    const bw = maxX - minX + 1
-    const bh = maxY - minY + 1
-    const fy = minY
-    const fh = Math.max(8, Math.floor(bh * 0.48))
-    const fx = minX + Math.floor(bw * 0.15)
-    const fw = Math.max(8, Math.floor(bw * 0.7))
-    faceStamp = document.createElement('canvas')
-    faceStamp.width = 32
-    faceStamp.height = 28
-    const fctx = faceStamp.getContext('2d')
-    if (fctx) {
-      fctx.imageSmoothingEnabled = false
-      fctx.clearRect(0, 0, 32, 28)
-      fctx.drawImage(src, fx, fy, fw, fh, 0, 0, 32, 28)
-      // Force cartoon levels again lightly
-      const id = fctx.getImageData(0, 0, 32, 28)
-      for (let i = 0; i < id.data.length; i += 4) {
-        if (id.data[i + 3] < 100) {
-          id.data[i + 3] = 0
-          continue
-        }
-        id.data[i] = Math.round(id.data[i] / 32) * 32
-        id.data[i + 1] = Math.round(id.data[i + 1] / 32) * 32
-        id.data[i + 2] = Math.round(id.data[i + 2] / 32) * 32
-        id.data[i + 3] = 255
-      }
-      fctx.putImageData(id, 0, 0)
-    }
-  }
+  const head = extractLayer(src, pad(parts.head, 0.08), palette.primary)
+  const torso = extractLayer(src, pad(parts.torso, 0.06), palette.primary)
+  const leftLeg = extractLayer(src, pad(parts.leftLeg, 0.1), palette.secondary)
+  const rightLeg = extractLayer(src, pad(parts.rightLeg, 0.1), palette.secondary)
+  const leftArm = extractLayer(src, pad(parts.leftArm, 0.1), palette.secondary)
+  const rightArm = extractLayer(src, pad(parts.rightArm, 0.1), palette.secondary)
 
   return {
-    primary: { r: primary.r, g: primary.g, b: primary.b },
-    secondary: { r: secondary.r, g: secondary.g, b: secondary.b },
-    accent: { r: accent.r, g: accent.g, b: accent.b },
-    outline,
-    highlight: { r: highlight.r, g: highlight.g, b: highlight.b },
-    eye: { r: eye.r, g: eye.g, b: eye.b },
-    faceStamp,
+    head,
+    torso,
+    leftLeg,
+    rightLeg,
+    leftArm,
+    rightArm,
+    leftEye: parts.leftEye ? extractLayer(src, pad(parts.leftEye, 0.35), palette.accent) : null,
+    rightEye: parts.rightEye ? extractLayer(src, pad(parts.rightEye, 0.35), palette.accent) : null,
+    mouth: parts.mouth ? extractLayer(src, pad(parts.mouth, 0.25), palette.accent) : null,
+    palette,
+    sourceParts: parts,
   }
 }
 
-function drawNewSideCharacter(a: CartoonAnalysis): { canvas: HTMLCanvasElement; parts: BodyParts } {
+/**
+ * Compose a 64×64 right-facing side model using extracted part textures.
+ * Layout is a walkable side silhouette; textures come from the user's image.
+ */
+function assembleSideAnimeModel(kit: PartKit): { canvas: HTMLCanvasElement; parts: BodyParts } {
   const size = 64
   const canvas = document.createElement('canvas')
   canvas.width = size
@@ -149,94 +110,69 @@ function drawNewSideCharacter(a: CartoonAnalysis): { canvas: HTMLCanvasElement; 
   ctx.imageSmoothingEnabled = false
   ctx.clearRect(0, 0, size, size)
 
-  const fill = (c: Rgb) => {
-    ctx.fillStyle = rgb(c)
+  const { primary, secondary, accent, highlight } = kit.palette
+
+  // Soft underpainting so gaps match the photo palette
+  fillRoundRect(ctx, 14, 28, 30, 20, 7, primary)
+  fillRoundRect(ctx, 20, 36, 22, 10, 4, secondary)
+
+  // Back (far) limbs first
+  const backLegSlot = { x: 16, y: 42, w: 12, h: 18 }
+  const frontLegSlot = { x: 34, y: 42, w: 12, h: 18 }
+  const backArmSlot = { x: 18, y: 30, w: 10, h: 14 }
+  const frontArmSlot = { x: 38, y: 30, w: 10, h: 14 }
+  const torsoSlot = { x: 16, y: 24, w: 30, h: 24 }
+  const headSlot = { x: 34, y: 4, w: 26, h: 26 }
+
+  drawLayerFitted(ctx, kit.leftLeg.canvas, backLegSlot, kit.leftLeg.fill)
+  drawLayerFitted(ctx, kit.leftArm.canvas, backArmSlot, kit.leftArm.fill)
+  drawLayerFitted(ctx, kit.torso.canvas, torsoSlot, kit.torso.fill)
+  // Belly tint from secondary for anime depth
+  ctx.globalAlpha = 0.35
+  fillRoundRect(ctx, 24, 36, 18, 10, 4, secondary)
+  ctx.globalAlpha = 1
+  drawLayerFitted(ctx, kit.rightArm.canvas, frontArmSlot, kit.rightArm.fill)
+  drawLayerFitted(ctx, kit.rightLeg.canvas, frontLegSlot, kit.rightLeg.fill)
+
+  // Head + facial features for likeness
+  drawLayerFitted(ctx, kit.head.canvas, headSlot, kit.head.fill)
+  if (kit.leftEye) {
+    drawLayerFitted(ctx, kit.leftEye.canvas, { x: 48, y: 14, w: 6, h: 6 }, kit.leftEye.fill)
+  } else {
+    ctx.fillStyle = rgb(accent)
+    ctx.fillRect(50, 16, 3, 3)
+    ctx.fillStyle = rgb(highlight)
+    ctx.fillRect(51, 16, 1, 1)
   }
-  const stroke = (c: Rgb) => {
-    ctx.strokeStyle = rgb(c)
+  if (kit.rightEye) {
+    drawLayerFitted(ctx, kit.rightEye.canvas, { x: 52, y: 15, w: 5, h: 5 }, kit.rightEye.fill)
   }
-
-  // === Brand-new side profile facing RIGHT (not the default dog mesh) ===
-  // Legs (back then front)
-  fill(a.secondary)
-  ctx.fillRect(18, 46, 6, 14) // back leg
-  ctx.fillRect(22, 48, 5, 12)
-  ctx.fillRect(34, 46, 6, 14) // front leg
-  ctx.fillRect(38, 48, 5, 12)
-  fill(a.highlight)
-  ctx.fillRect(18, 56, 6, 4) // paws
-  ctx.fillRect(34, 56, 6, 4)
-
-  // Tail
-  fill(a.primary)
-  ctx.fillRect(10, 34, 8, 6)
-  ctx.fillRect(8, 30, 5, 6)
-
-  // Torso (loaf / side body)
-  fill(a.primary)
-  roundRect(ctx, 16, 26, 28, 22, 6)
-  fill(a.secondary)
-  roundRect(ctx, 22, 34, 20, 12, 4) // belly
-
-  // Neck
-  fill(a.primary)
-  ctx.fillRect(38, 24, 8, 10)
-
-  // Head
-  fill(a.primary)
-  roundRect(ctx, 36, 8, 22, 22, 8)
-  // Snout
-  fill(a.secondary)
-  roundRect(ctx, 50, 18, 10, 10, 3)
-  // Ear
-  fill(a.accent)
-  ctx.fillRect(40, 4, 7, 10)
-  fill(a.highlight)
-  ctx.fillRect(42, 6, 3, 5)
-
-  // Soft face stamp for likeness (clipped to head)
-  if (a.faceStamp) {
-    ctx.save()
-    ctx.beginPath()
-    ctx.arc(48, 18, 9, 0, Math.PI * 2)
-    ctx.clip()
-    ctx.globalAlpha = 0.55
-    ctx.drawImage(a.faceStamp, 40, 8, 20, 18)
-    ctx.globalAlpha = 1
-    ctx.restore()
+  if (kit.mouth) {
+    drawLayerFitted(ctx, kit.mouth.canvas, { x: 50, y: 22, w: 8, h: 6 }, kit.mouth.fill)
   }
 
-  // Eye (open)
-  fill(a.eye)
-  ctx.fillRect(52, 16, 3, 3)
-  fill(a.highlight)
-  ctx.fillRect(53, 16, 1, 1)
+  // Tiny snout / nose cue from accent (anime side face)
+  ctx.fillStyle = rgb(secondary)
+  fillRoundRect(ctx, 52, 18, 8, 8, 2, secondary)
+  ctx.fillStyle = rgb(kit.palette.outline)
+  ctx.fillRect(58, 21, 2, 2)
 
-  // Nose
-  fill(a.outline)
-  ctx.fillRect(58, 20, 2, 2)
+  // Ear tip hint if head doesn't already cover
+  ctx.fillStyle = rgb(accent)
+  ctx.fillRect(40, 4, 6, 8)
+  ctx.fillStyle = rgb(highlight)
+  ctx.fillRect(41, 5, 3, 4)
 
-  // Mouth
-  stroke(a.outline)
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(54, 24)
-  ctx.lineTo(58, 25)
-  ctx.stroke()
-
-  // Outline pass for silhouette readability
-  outlineOpaque(ctx, size, a.outline)
-
-  const head: Rect = { x: 36, y: 4, w: 24, h: 26 }
-  const torso: Rect = { x: 16, y: 26, w: 28, h: 22 }
-  const legs: Rect = { x: 16, y: 44, w: 30, h: 16 }
-  const leftLeg: Rect = { x: 16, y: 44, w: 14, h: 16 }
-  const rightLeg: Rect = { x: 32, y: 44, w: 14, h: 16 }
-  const leftEye: Rect = { x: 50, y: 14, w: 5, h: 5 }
-  const rightEye: Rect = { x: 52, y: 15, w: 4, h: 4 }
-  const mouth: Rect = { x: 52, y: 22, w: 8, h: 5 }
-  const leftArm: Rect = { x: 16, y: 28, w: 8, h: 12 }
-  const rightArm: Rect = { x: 40, y: 28, w: 8, h: 12 }
+  const head: Rect = headSlot
+  const torso: Rect = torsoSlot
+  const legs: Rect = { x: 14, y: 42, w: 36, h: 18 }
+  const leftLeg: Rect = backLegSlot
+  const rightLeg: Rect = frontLegSlot
+  const leftArm: Rect = backArmSlot
+  const rightArm: Rect = frontArmSlot
+  const leftEye: Rect = { x: 48, y: 14, w: 6, h: 6 }
+  const rightEye: Rect = { x: 52, y: 15, w: 5, h: 5 }
+  const mouth: Rect = { x: 50, y: 22, w: 8, h: 6 }
 
   const parts: BodyParts = {
     head,
@@ -249,21 +185,51 @@ function drawNewSideCharacter(a: CartoonAnalysis): { canvas: HTMLCanvasElement; 
     leftEye,
     rightEye,
     mouth,
-    hasEyes: true,
-    hasMouth: true,
-    fromPose: true,
-    fromFace: true,
+    hasEyes: Boolean(kit.leftEye || kit.rightEye || kit.sourceParts.hasEyes),
+    hasMouth: Boolean(kit.mouth || kit.sourceParts.hasMouth),
+    fromPose: kit.sourceParts.fromPose,
+    fromFace: kit.sourceParts.fromFace,
   }
 
   return { canvas, parts }
 }
 
-function outlineOpaque(ctx: CanvasRenderingContext2D, size: number, outline: Rgb) {
-  const { data } = ctx.getImageData(0, 0, size, size)
+/** Anime-pixel look: posterize + dark outline on opaque edges. */
+function stylizeAnimePixel(canvas: HTMLCanvasElement, outline: Rgb) {
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (!ctx) return
+  const { width: w, height: h } = canvas
+  const image = ctx.getImageData(0, 0, w, h)
+  const { data } = image
+  const levels = 7
+  const step = 255 / (levels - 1)
+
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 40) {
+      data[i + 3] = 0
+      continue
+    }
+    let r = data[i]
+    let g = data[i + 1]
+    let b = data[i + 2]
+    // Slight saturation for cel look
+    const max = Math.max(r, g, b)
+    const min = Math.min(r, g, b)
+    const mid = (max + min) / 2
+    const sat = 1.18
+    r = Math.max(0, Math.min(255, mid + (r - mid) * sat))
+    g = Math.max(0, Math.min(255, mid + (g - mid) * sat))
+    b = Math.max(0, Math.min(255, mid + (b - mid) * sat))
+    data[i] = Math.round(Math.round(r / step) * step)
+    data[i + 1] = Math.round(Math.round(g / step) * step)
+    data[i + 2] = Math.round(Math.round(b / step) * step)
+    data[i + 3] = 255
+  }
+
   const out = new Uint8ClampedArray(data)
-  for (let y = 1; y < size - 1; y++) {
-    for (let x = 1; x < size - 1; x++) {
-      const i = (y * size + x) * 4
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = (y * w + x) * 4
       if (data[i + 3] < 128) continue
       let edge = false
       for (const [dx, dy] of [
@@ -272,7 +238,7 @@ function outlineOpaque(ctx: CanvasRenderingContext2D, size: number, outline: Rgb
         [0, -1],
         [0, 1],
       ] as const) {
-        if (data[((y + dy) * size + (x + dx)) * 4 + 3] < 64) {
+        if (data[((y + dy) * w + (x + dx)) * 4 + 3] < 64) {
           edge = true
           break
         }
@@ -285,10 +251,170 @@ function outlineOpaque(ctx: CanvasRenderingContext2D, size: number, outline: Rgb
       }
     }
   }
-  ctx.putImageData(new ImageData(out, size, size), 0, 0)
+  ctx.putImageData(new ImageData(out, w, h), 0, 0)
 }
 
-function roundRect(
+function extractLayer(src: HTMLCanvasElement, rect: Rect, fallback: Rgb): PartLayer {
+  const w = Math.max(1, rect.w)
+  const h = Math.max(1, rect.h)
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (!ctx) return { canvas, fill: fallback }
+  ctx.imageSmoothingEnabled = false
+  ctx.clearRect(0, 0, w, h)
+  ctx.drawImage(src, rect.x, rect.y, w, h, 0, 0, w, h)
+
+  // Drop near-transparent fringe
+  const id = ctx.getImageData(0, 0, w, h)
+  let sr = 0
+  let sg = 0
+  let sb = 0
+  let n = 0
+  for (let i = 0; i < id.data.length; i += 4) {
+    if (id.data[i + 3] < 48) {
+      id.data[i + 3] = 0
+      continue
+    }
+    sr += id.data[i]
+    sg += id.data[i + 1]
+    sb += id.data[i + 2]
+    n++
+  }
+  ctx.putImageData(id, 0, 0)
+  const fill =
+    n > 0
+      ? { r: Math.round(sr / n), g: Math.round(sg / n), b: Math.round(sb / n) }
+      : fallback
+  return { canvas, fill }
+}
+
+function drawLayerFitted(
+  ctx: CanvasRenderingContext2D,
+  layer: HTMLCanvasElement,
+  slot: Rect,
+  fill: Rgb,
+) {
+  // Underpaint so thin/partial patches still read as a limb/body
+  ctx.fillStyle = rgb(fill)
+  ctx.globalAlpha = 0.55
+  fillRoundRect(ctx, slot.x, slot.y, slot.w, slot.h, 3, fill)
+  ctx.globalAlpha = 1
+
+  const lw = layer.width
+  const lh = layer.height
+  if (lw < 1 || lh < 1) return
+
+  // Contain-fit with slight overscale so photo detail fills the slot
+  const scale = Math.max(slot.w / lw, slot.h / lh) * 0.96
+  const dw = Math.max(1, Math.round(lw * scale))
+  const dh = Math.max(1, Math.round(lh * scale))
+  const dx = slot.x + Math.floor((slot.w - dw) / 2)
+  const dy = slot.y + Math.floor((slot.h - dh) / 2)
+
+  ctx.save()
+  // Soft clip to slot
+  ctx.beginPath()
+  roundRectPath(ctx, slot.x, slot.y, slot.w, slot.h, 3)
+  ctx.clip()
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(layer, dx, dy, dw, dh)
+  ctx.restore()
+}
+
+function extractPalette(src: HTMLCanvasElement): PartKit['palette'] {
+  const ctx = src.getContext('2d', { willReadFrequently: true })
+  if (!ctx) {
+    return {
+      primary: { r: 210, g: 140, b: 70 },
+      secondary: { r: 245, g: 230, b: 210 },
+      accent: { r: 150, g: 90, b: 50 },
+      outline: { r: 50, g: 36, b: 28 },
+      highlight: { r: 255, g: 245, b: 230 },
+    }
+  }
+  const { data } = ctx.getImageData(0, 0, src.width, src.height)
+  const counts = new Map<string, { c: Rgb; n: number }>()
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 128) continue
+    const r = data[i]
+    const g = data[i + 1]
+    const b = data[i + 2]
+    const key = `${r >> 4},${g >> 4},${b >> 4}`
+    const cur = counts.get(key)
+    if (cur) {
+      cur.n++
+      cur.c.r += r
+      cur.c.g += g
+      cur.c.b += b
+    } else {
+      counts.set(key, { c: { r, g, b }, n: 1 })
+    }
+  }
+  const sorted = [...counts.values()]
+    .map((v) => ({
+      r: Math.round(v.c.r / v.n),
+      g: Math.round(v.c.g / v.n),
+      b: Math.round(v.c.b / v.n),
+      n: v.n,
+      lum: 0.299 * (v.c.r / v.n) + 0.587 * (v.c.g / v.n) + 0.114 * (v.c.b / v.n),
+    }))
+    .sort((a, b) => b.n - a.n)
+
+  if (!sorted.length) {
+    return {
+      primary: { r: 210, g: 140, b: 70 },
+      secondary: { r: 245, g: 230, b: 210 },
+      accent: { r: 150, g: 90, b: 50 },
+      outline: { r: 50, g: 36, b: 28 },
+      highlight: { r: 255, g: 245, b: 230 },
+    }
+  }
+
+  const primary = sorted[0]
+  const secondary =
+    sorted.find((c) => c.lum > primary.lum + 22) ??
+    sorted.find((c) => Math.abs(c.lum - primary.lum) > 18) ??
+    lighten(primary, 36)
+  const accent = sorted.find((c) => c.lum < primary.lum - 28) ?? darken(primary, 40)
+  return {
+    primary: { r: primary.r, g: primary.g, b: primary.b },
+    secondary: { r: secondary.r, g: secondary.g, b: secondary.b },
+    accent: { r: accent.r, g: accent.g, b: accent.b },
+    outline: darken(accent, 22),
+    highlight: lighten(secondary, 30),
+  }
+}
+
+function padRect(r: Rect, ratio: number, maxW: number, maxH: number): Rect {
+  const px = Math.round(r.w * ratio)
+  const py = Math.round(r.h * ratio)
+  const x = Math.max(0, r.x - px)
+  const y = Math.max(0, r.y - py)
+  return {
+    x,
+    y,
+    w: Math.min(maxW - x, r.w + px * 2),
+    h: Math.min(maxH - y, r.h + py * 2),
+  }
+}
+
+function fillRoundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+  c: Rgb,
+) {
+  ctx.fillStyle = rgb(c)
+  roundRectPath(ctx, x, y, w, h, r)
+  ctx.fill()
+}
+
+function roundRectPath(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
@@ -304,7 +430,6 @@ function roundRect(
   ctx.arcTo(x, y + h, x, y, rr)
   ctx.arcTo(x, y, x + w, y, rr)
   ctx.closePath()
-  ctx.fill()
 }
 
 function canvasToPixelImage(canvas: HTMLCanvasElement): PixelImage {
@@ -320,24 +445,27 @@ function canvasToPixelImage(canvas: HTMLCanvasElement): PixelImage {
 }
 
 function scaleParts(parts: BodyParts, sx: number, sy: number): BodyParts {
-  const scale = (r: Rect): Rect => ({
-    x: Math.floor(r.x * sx),
-    y: Math.floor(r.y * sy),
-    w: Math.max(1, Math.round(r.w * sx)),
-    h: Math.max(1, Math.round(r.h * sy)),
-  })
+  const scale = (r: Rect | null): Rect | null =>
+    r
+      ? {
+          x: Math.floor(r.x * sx),
+          y: Math.floor(r.y * sy),
+          w: Math.max(1, Math.round(r.w * sx)),
+          h: Math.max(1, Math.round(r.h * sy)),
+        }
+      : null
   return {
     ...parts,
-    head: scale(parts.head),
-    torso: scale(parts.torso),
-    legs: scale(parts.legs),
-    leftLeg: scale(parts.leftLeg),
-    rightLeg: scale(parts.rightLeg),
-    leftArm: scale(parts.leftArm),
-    rightArm: scale(parts.rightArm),
-    leftEye: parts.leftEye ? scale(parts.leftEye) : null,
-    rightEye: parts.rightEye ? scale(parts.rightEye) : null,
-    mouth: parts.mouth ? scale(parts.mouth) : null,
+    head: scale(parts.head)!,
+    torso: scale(parts.torso)!,
+    legs: scale(parts.legs)!,
+    leftLeg: scale(parts.leftLeg)!,
+    rightLeg: scale(parts.rightLeg)!,
+    leftArm: scale(parts.leftArm)!,
+    rightArm: scale(parts.rightArm)!,
+    leftEye: scale(parts.leftEye),
+    rightEye: scale(parts.rightEye),
+    mouth: scale(parts.mouth),
   }
 }
 
@@ -368,17 +496,5 @@ function darken(c: Rgb, amt: number): Rgb {
     r: Math.max(0, c.r - amt),
     g: Math.max(0, c.g - amt),
     b: Math.max(0, c.b - amt),
-  }
-}
-
-function fallbackAnalysis(): CartoonAnalysis {
-  return {
-    primary: { r: 210, g: 140, b: 70 },
-    secondary: { r: 245, g: 230, b: 210 },
-    accent: { r: 150, g: 90, b: 50 },
-    outline: { r: 60, g: 40, b: 30 },
-    highlight: { r: 255, g: 245, b: 230 },
-    eye: { r: 30, g: 24, b: 22 },
-    faceStamp: null,
   }
 }

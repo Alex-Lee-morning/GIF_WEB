@@ -207,20 +207,23 @@ export default function PetApp() {
     setStreaming(true)
     setAnim('think')
 
-    const history: ChatMessage[] = [...messages.slice(-6), { role: 'user', content: userText }]
+    // Keep last few turns; user message stays visible in the bubble
+    const history: ChatMessage[] = [...messages.slice(-8), { role: 'user', content: userText }]
     setMessages(history)
 
     let content = ''
     let thinking = ''
+    let talking = false
     try {
       await api.chatStream(history, (chunk) => {
         if (chunk.type === 'reasoning' && chunk.text) {
           thinking += chunk.text
           setReasoning(thinking)
-          setAnim('think')
+          if (!talking) setAnim('think')
         } else if (chunk.type === 'content' && chunk.text) {
           content += chunk.text
           setReply(content)
+          talking = true
           setAnim('talk')
         } else if (chunk.type === 'error') {
           setError(chunk.text ?? '对话失败')
@@ -228,8 +231,15 @@ export default function PetApp() {
         } else if (chunk.type === 'done') {
           if (content) {
             setMessages((prev) => [...prev, { role: 'assistant', content }])
+            setReply('')
+            // Keep talk animation for a beat after the reply finishes
+            setAnim('talk')
+            window.setTimeout(() => {
+              setAnim((current) => (current === 'talk' ? 'idle' : current))
+            }, 2200)
+          } else {
+            setAnim('idle')
           }
-          setAnim('idle')
         }
       })
     } catch (err) {
@@ -267,6 +277,7 @@ export default function PetApp() {
 
       {chatOpen && (
         <ChatBubble
+          messages={messages}
           input={input}
           reply={reply}
           reasoning={reasoning}

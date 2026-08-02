@@ -51,6 +51,7 @@ body,
 
 .pet-sprite.state-talk {
   filter: drop-shadow(0 8px 0 rgba(0, 0, 0, 0.12)) saturate(1.1);
+  animation: pet-talk-bob 0.36s ease-in-out infinite;
 }
 
 .think-dots {
@@ -133,15 +134,67 @@ body,
 
 .chat-body {
   min-height: 56px;
-  max-height: 140px;
+  max-height: 160px;
   overflow: auto;
   font-size: 13px;
   margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.chat-body .reply {
+.chat-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-msg-role {
+  font-size: 11px;
+  color: #5d6b62;
+}
+
+.chat-msg-text {
   margin: 0;
   white-space: pre-wrap;
+  word-break: break-word;
+  padding: 6px 8px;
+  border-radius: 8px;
+  line-height: 1.35;
+}
+
+.chat-msg-user .chat-msg-text {
+  background: rgba(47, 111, 78, 0.12);
+  align-self: flex-end;
+}
+
+.chat-msg-assistant .chat-msg-text {
+  background: rgba(31, 42, 36, 0.06);
+  align-self: flex-start;
+}
+
+.chat-msg-streaming .chat-msg-text {
+  animation: talk-pulse 0.9s ease-in-out infinite;
+}
+
+@keyframes talk-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.82;
+  }
+}
+
+@keyframes pet-talk-bob {
+  0%,
+  100% {
+    transform: translateY(0) scale(1, 1);
+  }
+  50% {
+    transform: translateY(1px) scale(1.02, 0.98);
+  }
 }
 
 .chat-body .muted {
