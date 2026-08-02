@@ -1,0 +1,137 @@
+{
+  "name": "pixel-pet",
+  "productName": "像素桌宠",
+  "private": true,
+  "version": "1.0.0",
+  "author": "Pixel Pet",
+  "description": "把照片变成像素桌宠，支持待机动画与国内 AI 对话",
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "sync:bg-removal": "node scripts/sync-bg-removal-assets.mjs",
+    "predev": "npm run sync:bg-removal",
+    "prebuild": "npm run sync:bg-removal",
+    "dev": "concurrently -k -n vite,electron -c cyan,magenta \"vite\" \"npm run dev:electron\"",
+    "dev:electron": "wait-on http://127.0.0.1:5173 && npm run build:electron && VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
+    "build:electron": "node scripts/build-electron.mjs",
+    "build": "tsc -b && vite build && npm run build:electron",
+    "dist": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --publish never",
+    "dist:dir": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --publish never -c.electronDist=node_modules/electron/dist",
+    "dist:win": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --x64 --publish never -c.directories.output=Windows版",
+    "release:publish": "node scripts/publish-release.mjs",
+    "preview": "vite preview",
+    "lint": "oxlint"
+  },
+  "build": {
+    "appId": "com.pixelpet.app",
+    "productName": "像素桌宠",
+    "directories": {
+      "output": "release"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Alex-Lee-morning",
+        "repo": "GIF_WEB"
+      }
+    ],
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "resources/**/*",
+      "update/update-config.json",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "resources/**"
+    ],
+    "mac": {
+      "category": "public.app-category.entertainment",
+      "target": [
+        "dmg",
+        "zip",
+        "dir"
+      ],
+      "identity": null,
+      "icon": "resources/icon.png",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "NSCameraUsageDescription": "不需要相机；保留系统兼容字段。",
+        "LSMicrophoneUsageDescription": "不需要麦克风；保留系统兼容字段。"
+      }
+    },
+    "dmg": {
+      "title": "像素桌宠",
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.png",
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "像素桌宠",
+      "installerLanguages": [
+        "zh_CN",
+        "en_US"
+      ],
+      "language": "2052"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-win-portable.${ext}"
+    },
+    "electronDownload": {
+      "mirror": "https://npmmirror.com/mirrors/electron/"
+    }
+  },
+  "dependencies": {
+    "@imgly/background-removal": "^1.7.0",
+    "@imgly/background-removal-data": "^1.4.5",
+    "@mediapipe/tasks-vision": "^1.0.0",
+    "electron-updater": "^6.8.9",
+    "gifenc": "^1.0.3",
+    "onnxruntime-web": "^1.21.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "concurrently": "^9.2.1",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.1",
+    "oxlint": "^1.75.0",
+    "playwright": "^1.62.1",
+    "tsx": "^4.23.1",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0",
+    "wait-on": "^9.0.3"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "provider": "github",
+  "owner": "Alex-Lee-morning",
+  "repo": "GIF_WEB",
+  "repositoryUrl": "https://github.com/Alex-Lee-morning/GIF_WEB.git",
+  "notes": {
+    "mac": "Auto-update uses zip artifacts (latest-mac.yml).",
+    "windows": "Auto-update uses NSIS installer only (latest.yml). Portable builds are not updatable.",
+    "check": "App checks GitHub Releases on every launch when packaged."
+  }
+}
