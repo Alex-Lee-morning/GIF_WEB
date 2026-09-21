@@ -14,6 +14,7 @@ export function PixelPet({ sprites, fallbackSrc, size, state, className }: Pixel
   const [tick, setTick] = useState(0)
 
   useEffect(() => {
+    setTick(0)
     const id = window.setInterval(() => {
       setTick((t) => t + 1)
     }, frameIntervalMs(state, sprites?.animStyle))
@@ -23,10 +24,14 @@ export function PixelPet({ sprites, fallbackSrc, size, state, className }: Pixel
   const frameList = sprites?.frames[state] ?? sprites?.frames.idle ?? null
   const src = useMemo(() => {
     if (frameList && frameList.length > 0) {
+      // Face click react: play ball-bonk once, then hold last frame until idle
+      if (sprites?.animStyle === 'face' && state === 'react') {
+        return frameList[Math.min(tick, frameList.length - 1)]
+      }
       return frameList[tick % frameList.length]
     }
     return fallbackSrc
-  }, [fallbackSrc, frameList, tick])
+  }, [fallbackSrc, frameList, tick, sprites?.animStyle, state])
 
   const cssFrame = getAnimFrame(state, tick)
   const useCssFallback = !frameList || frameList.length === 0

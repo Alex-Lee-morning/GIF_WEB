@@ -66,14 +66,14 @@ export function frameIntervalMs(state: PetAnimState, animStyle?: 'body' | 'face'
   if (animStyle === 'face') {
     switch (state) {
       case 'idle':
-        return 130
+        return 380
+      case 'react':
+        return 110
       case 'dragLeft':
       case 'dragRight':
       case 'dragUp':
       case 'dragDown':
         return 100
-      case 'react':
-        return 120
       case 'talk':
         return 160
       case 'think':

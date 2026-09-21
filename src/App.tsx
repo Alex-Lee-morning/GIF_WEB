@@ -276,7 +276,7 @@ export default function App() {
               onChange={(e) => setCropMode(e.target.value as SubjectCropMode)}
             >
               <option value="full">完整主体（头+身体）· 走路动画</option>
-              <option value="face">仅脸部 · 手拉脸 / 小球砸头</option>
+              <option value="face">仅脸部 · 点击小球砸头 / 拖动手拉脸</option>
             </select>
           </label>
 

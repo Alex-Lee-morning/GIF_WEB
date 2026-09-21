@@ -7,8 +7,9 @@ const SCALE_UP = 8
 
 /**
  * Face-crop pet sprites:
+ * - idle: calm face (no looping ball)
+ * - react (click): a ball drops and bonks the head (no frown / expression)
  * - drag*: a cartoon hand pulls the face with soft deformation
- * - idle: a ball drops, bonks the head, then the face frowns
  */
 export async function generateFacePetSprites(
   pixel: PixelImage,
@@ -17,7 +18,8 @@ export async function generateFacePetSprites(
   const base = canvasFromPixel(pixel)
   const { width, height } = pixel
 
-  const idleCanvases = makeBallBonkIdle(base, parts)
+  const idleCanvases = makeCalmIdle(base)
+  const reactCanvases = makeBallBonkReact(base, parts)
   const pullLeft = makeHandPullCycle(base, parts, 'left')
   const pullRight = makeHandPullCycle(base, parts, 'right')
   const pullUp = makeHandPullCycle(base, parts, 'up')
@@ -29,15 +31,6 @@ export async function generateFacePetSprites(
     if (parts.hasMouth && parts.mouth && a > 0.2) f = openMouthSlight(f, parts, 0.3 + a * 0.4)
     return f
   })
-
-  const reactFrames = [
-    deformFace(base, { squashX: 1.08, squashY: 0.9, ty: 1 }),
-    deformFace(base, { squashX: 0.94, squashY: 1.08, ty: -2 }),
-    deformFace(base, { rot: -4 }),
-    deformFace(base, { rot: 4 }),
-    deformFace(base, { squashX: 1.02, squashY: 0.98 }),
-    cloneCanvas(base),
-  ]
 
   const thinkFrames = [
     deformFace(base, { tx: -1, rot: -4 }),
@@ -55,17 +48,17 @@ export async function generateFacePetSprites(
     dragRight: pullRight.map(upscaleDataUrl),
     dragUp: pullUp.map(upscaleDataUrl),
     dragDown: pullDown.map(upscaleDataUrl),
-    react: reactFrames.map(upscaleDataUrl),
+    react: reactCanvases.map(upscaleDataUrl),
     think: thinkFrames.map(upscaleDataUrl),
   }
 
   const previewSources: Array<{ canvas: HTMLCanvasElement; delay: number }> = [
-    { canvas: idleCanvases[0], delay: 120 },
-    { canvas: idleCanvases[2], delay: 100 },
-    { canvas: idleCanvases[4], delay: 90 },
-    { canvas: idleCanvases[6], delay: 100 },
-    { canvas: idleCanvases[8], delay: 140 },
-    { canvas: idleCanvases[10], delay: 160 },
+    { canvas: idleCanvases[0], delay: 200 },
+    { canvas: idleCanvases[1], delay: 200 },
+    { canvas: reactCanvases[2], delay: 90 },
+    { canvas: reactCanvases[4], delay: 90 },
+    { canvas: reactCanvases[6], delay: 100 },
+    { canvas: reactCanvases[8], delay: 110 },
     { canvas: pullRight[1], delay: 110 },
     { canvas: pullRight[3], delay: 110 },
     { canvas: pullLeft[2], delay: 110 },
@@ -83,41 +76,54 @@ export async function generateFacePetSprites(
   }
 }
 
-/** Idle: ball falls → hits head → frown → recover */
-function makeBallBonkIdle(base: HTMLCanvasElement, parts: BodyParts): HTMLCanvasElement[] {
+/** Idle: quiet face with tiny breathe — no ball. */
+function makeCalmIdle(base: HTMLCanvasElement): HTMLCanvasElement[] {
+  return [
+    cloneCanvas(base),
+    deformFace(base, { squashY: 0.99, ty: 0 }),
+    cloneCanvas(base),
+    deformFace(base, { squashY: 1.01, ty: -0.5 }),
+    cloneCanvas(base),
+    cloneCanvas(base),
+  ]
+}
+
+/** Click react: ball falls → hits head → leaves. No frown / expression change. */
+function makeBallBonkReact(base: HTMLCanvasElement, parts: BodyParts): HTMLCanvasElement[] {
   const w = base.width
   const h = base.height
   const headTop = Math.max(2, parts.head.y)
   const headCx = Math.floor(parts.head.x + parts.head.w / 2)
   const ballR = Math.max(2, Math.round(Math.min(w, h) * 0.07))
 
-  // y positions for ball (from above canvas into head)
   const startY = -ballR * 2
   const hitY = headTop + Math.max(1, Math.floor(parts.head.h * 0.08))
   const frames: HTMLCanvasElement[] = []
 
-  const timeline: Array<{ ballY: number; impact: number; frown: number }> = [
-    { ballY: startY, impact: 0, frown: 0 },
-    { ballY: startY + (hitY - startY) * 0.25, impact: 0, frown: 0 },
-    { ballY: startY + (hitY - startY) * 0.5, impact: 0, frown: 0 },
-    { ballY: startY + (hitY - startY) * 0.75, impact: 0, frown: 0 },
-    { ballY: hitY, impact: 0.35, frown: 0.15 },
-    { ballY: hitY + 1, impact: 1, frown: 0.55 },
-    { ballY: hitY + 2, impact: 0.7, frown: 0.9 },
-    { ballY: hitY + 4, impact: 0.35, frown: 1 },
-    { ballY: hitY + 8, impact: 0.1, frown: 0.85 },
-    { ballY: hitY + 14, impact: 0, frown: 0.55 },
-    { ballY: h + ballR * 2, impact: 0, frown: 0.25 },
-    { ballY: h + ballR * 3, impact: 0, frown: 0 },
+  const timeline: Array<{ ballY: number; impact: number }> = [
+    { ballY: startY, impact: 0 },
+    { ballY: startY + (hitY - startY) * 0.25, impact: 0 },
+    { ballY: startY + (hitY - startY) * 0.5, impact: 0 },
+    { ballY: startY + (hitY - startY) * 0.75, impact: 0 },
+    { ballY: hitY, impact: 0.4 },
+    { ballY: hitY + 1, impact: 0.85 },
+    { ballY: hitY + 3, impact: 0.45 },
+    { ballY: hitY + 7, impact: 0.15 },
+    { ballY: hitY + 14, impact: 0 },
+    { ballY: h + ballR * 2, impact: 0 },
+    { ballY: h + ballR * 3, impact: 0 },
   ]
 
   for (const t of timeline) {
-    let face = deformFace(base, {
-      squashX: 1 + t.impact * 0.08,
-      squashY: 1 - t.impact * 0.12,
-      ty: Math.round(t.impact * 1.5),
-    })
-    if (t.frown > 0.05) face = applyFrown(face, parts, t.frown)
+    // Only a light physical squash on impact — no frown / expression feedback
+    const face =
+      t.impact > 0.05
+        ? deformFace(base, {
+            squashX: 1 + t.impact * 0.06,
+            squashY: 1 - t.impact * 0.08,
+            ty: Math.round(t.impact * 1.2),
+          })
+        : cloneCanvas(base)
     const out = cloneCanvas(face)
     const ctx = out.getContext('2d')
     if (ctx && t.ballY < h + ballR * 2) {
@@ -125,6 +131,8 @@ function makeBallBonkIdle(base: HTMLCanvasElement, parts: BodyParts): HTMLCanvas
     }
     frames.push(out)
   }
+  // End on clean face
+  frames.push(cloneCanvas(base))
   return frames
 }
 
@@ -220,76 +228,6 @@ function deformFace(
   ctx.drawImage(source, -w / 2, -h / 2)
   ctx.restore()
   return c
-}
-
-function applyFrown(source: HTMLCanvasElement, parts: BodyParts, amount: number): HTMLCanvasElement {
-  const c = cloneCanvas(source)
-  const ctx = c.getContext('2d')
-  if (!ctx) return c
-  ctx.imageSmoothingEnabled = false
-
-  const brows: Array<{ x: number; y: number; w: number }> = []
-  if (parts.leftEye) {
-    brows.push({
-      x: parts.leftEye.x,
-      y: Math.max(0, parts.leftEye.y - Math.max(1, Math.floor(parts.leftEye.h * 0.6))),
-      w: parts.leftEye.w,
-    })
-  }
-  if (parts.rightEye) {
-    brows.push({
-      x: parts.rightEye.x,
-      y: Math.max(0, parts.rightEye.y - Math.max(1, Math.floor(parts.rightEye.h * 0.6))),
-      w: parts.rightEye.w,
-    })
-  }
-  if (brows.length === 0) {
-    const midY = Math.floor(source.height * 0.28)
-    brows.push({ x: Math.floor(source.width * 0.22), y: midY, w: Math.floor(source.width * 0.2) })
-    brows.push({ x: Math.floor(source.width * 0.58), y: midY, w: Math.floor(source.width * 0.2) })
-  }
-
-  const thick = Math.max(1, Math.round(1 + amount))
-  ctx.strokeStyle = `rgba(40, 28, 24, ${0.55 + amount * 0.4})`
-  ctx.lineWidth = thick
-  ctx.lineCap = 'square'
-
-  // Inner ends drop → angry / frown brows
-  if (brows[0]) {
-    const b = brows[0]
-    ctx.beginPath()
-    ctx.moveTo(b.x, b.y + Math.round(amount * 2))
-    ctx.lineTo(b.x + b.w, b.y - Math.round(amount))
-    ctx.stroke()
-  }
-  if (brows[1]) {
-    const b = brows[1]
-    ctx.beginPath()
-    ctx.moveTo(b.x, b.y - Math.round(amount))
-    ctx.lineTo(b.x + b.w, b.y + Math.round(amount * 2))
-    ctx.stroke()
-  }
-
-  // Slight mouth downturn
-  if (parts.mouth) {
-    const m = parts.mouth
-    ctx.strokeStyle = `rgba(30, 20, 18, ${0.4 + amount * 0.45})`
-    ctx.beginPath()
-    ctx.moveTo(m.x, m.y + Math.floor(m.h * 0.4))
-    ctx.quadraticCurveTo(
-      m.x + m.w / 2,
-      m.y + m.h + Math.round(amount * 2),
-      m.x + m.w,
-      m.y + Math.floor(m.h * 0.4),
-    )
-    ctx.stroke()
-  }
-
-  return deformFace(c, {
-    squashX: 1 + amount * 0.03,
-    squashY: 1 - amount * 0.04,
-    ty: Math.round(amount),
-  })
 }
 
 function openMouthSlight(source: HTMLCanvasElement, parts: BodyParts, open: number): HTMLCanvasElement {

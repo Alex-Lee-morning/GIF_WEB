@@ -1,6 +1,8 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
-import { autoUpdater } from 'electron-updater'
+import electronUpdater from 'electron-updater'
 import type { UpdateStatus } from '../shared/types.js'
+
+const { autoUpdater } = electronUpdater
 
 type BroadcastFn = (status: UpdateStatus) => void
 

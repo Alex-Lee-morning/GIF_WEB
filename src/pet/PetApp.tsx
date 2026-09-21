@@ -48,13 +48,15 @@ export default function PetApp() {
     return () => unsub()
   }, [api])
 
+  // Click react: body bounce is short; face ball-bonk needs a full cycle
   useEffect(() => {
     if (anim !== 'react') return
+    const ms = isFacePet ? 1400 : 520
     const timer = window.setTimeout(() => {
       setAnim((current) => (current === 'react' ? 'idle' : current))
-    }, 520)
+    }, ms)
     return () => window.clearTimeout(timer)
-  }, [anim])
+  }, [anim, isFacePet])
 
   useEffect(() => {
     const close = () => setMenu(null)
@@ -62,7 +64,7 @@ export default function PetApp() {
     return () => window.removeEventListener('click', close)
   }, [])
 
-  // Autonomous walk: body pets only. Face pets stay put (hand-pull on drag, ball-bonk idle).
+  // Autonomous walk: body pets only. Face pets stay put (hand-pull on drag; ball on click).
   useEffect(() => {
     if (!api || isFacePet) {
       autoWalkAbortRef.current = true
